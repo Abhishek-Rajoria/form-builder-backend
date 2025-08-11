@@ -1,16 +1,42 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import mongoose from 'mongoose';
 import connectDB from './config/database.js';
 import formRoutes from './routes/formRoutes.js';
 
+// Load environment variables
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Connect to database
-connectDB();
+// Connect to database with retry logic
+const startServer = async () => {
+    try {
+        await connectDB();
+
+        // Start server only after database connection is established
+        app.listen(PORT, '0.0.0.0', () => {
+            console.log(`Server running on port ${PORT}`);
+            console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+        });
+    } catch (error) {
+        console.error('Failed to start server:', error);
+        process.exit(1);
+    }
+};
+
+// Handle graceful shutdown
+process.on('SIGTERM', () => {
+    console.log('SIGTERM received, shutting down gracefully');
+    process.exit(0);
+});
+
+process.on('SIGINT', () => {
+    console.log('SIGINT received, shutting down gracefully');
+    process.exit(0);
+});
 
 // CORS configuration
 const corsOptions = {
@@ -46,8 +72,35 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Health check endpoint
-app.get('/api/health', (req, res) => {
-    res.json({ success: true, message: 'Server is running', timestamp: new Date().toISOString() });
+app.get('/api/health', async (req, res) => {
+    try {
+        // Check database connection
+        const dbStatus = mongoose.connection.readyState === 1 ? 'connected' : 'disconnected';
+
+        res.json({
+            success: true,
+            message: 'Server is running',
+            timestamp: new Date().toISOString(),
+            database: dbStatus,
+            environment: process.env.NODE_ENV || 'development',
+            port: PORT,
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            message: 'Health check failed',
+            error: error.message,
+        });
+    }
+});
+
+// Root endpoint for Railway health checks
+app.get('/', (req, res) => {
+    res.json({
+        success: true,
+        message: 'Form Builder API is running',
+        timestamp: new Date().toISOString(),
+    });
 });
 
 // Routes
@@ -64,6 +117,5 @@ app.use('*', (req, res) => {
     res.status(404).json({ success: false, message: 'Route not found' });
 });
 
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-});
+// Start the server
+startServer();
